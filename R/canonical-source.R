@@ -6,17 +6,20 @@
 #' plus UTC `POSIXct` `admission_time` and `discharge_time`.
 #' `terminal_event` requires character `terminal_event_id`, `episode_id`, and
 #' `event_type` (`"readmission"` or `"death"`), plus UTC `POSIXct`
-#' `occurred_at` and `available_at`. Either table may have zero rows if it
+#' `occurred_at`. Either table may have zero rows if it
 #' retains its required typed columns. Identifiers must be nonmissing and
 #' nonblank, and timestamps must be finite. Episode and terminal-event IDs
 #' must be unique, and every terminal event must reference a supplied episode.
 #' Additional columns are left unchanged but are not used by `readmit`.
 #'
 #' `as_of_time` is one finite UTC `POSIXct` instant. The project author supplies
-#' episodes discharged by that time and truthful event occurrence and
-#' availability times. An event may have occurred by `as_of_time` but become
-#' available later; canonical validation does not filter it. The project owns
-#' clinical source selection, mapping, and private predictors. `readmit` owns
+#' only episodes with `discharge_time <= as_of_time`; equality is valid. A later
+#' discharge is rejected during canonical production, before eligibility,
+#' provider invocation, or history persistence. Supplied terminal events affect
+#' eligibility when `occurred_at <= as_of_time`; later events do not. Additional
+#' columns, including `available_at`, have no special platform interpretation.
+#' The project owns clinical source selection, mapping, and private predictors;
+#' it may apply its own timing rules to those predictors. `readmit` owns
 #' the fixed 30-elapsed-day endpoint, which is derived from `discharge_time`
 #' during later analytical execution and is not a canonical input column.
 #'
@@ -41,6 +44,19 @@ rrp_produce_project_canonical <- function(project_root, as_of_time,
     }
   )
   rrp_check_canonical_source(canonical)
+  episodes <- canonical$discharge_episode
+  future <- which(episodes$discharge_time > as_of_time)
+  if (length(future)) {
+    index <- future[[1L]]
+    stop(sprintf(
+      paste0("discharge_episode$discharge_time must be <= as_of_time (%s); ",
+             "episode_id '%s' has discharge_time %s."),
+      format(as_of_time, "%Y-%m-%d %H:%M:%OS6 UTC", tz = "UTC"),
+      episodes$episode_id[[index]],
+      format(episodes$discharge_time[[index]],
+             "%Y-%m-%d %H:%M:%OS6 UTC", tz = "UTC")
+    ), call. = FALSE)
+  }
   canonical
 }
 
@@ -95,8 +111,7 @@ rrp_check_canonical_source <- function(canonical) {
   )
   rrp_check_canonical_table(
     events, "terminal_event",
-    c("terminal_event_id", "episode_id", "event_type", "occurred_at",
-      "available_at")
+    c("terminal_event_id", "episode_id", "event_type", "occurred_at")
   )
   for (field in c("episode_id", "patient_id", "index_encounter_id")) {
     rrp_check_canonical_id(episodes[[field]], paste0("discharge_episode$", field))
@@ -122,8 +137,6 @@ rrp_check_canonical_source <- function(canonical) {
   for (field in c("admission_time", "discharge_time")) {
     rrp_check_utc_time(episodes[[field]], paste0("discharge_episode$", field))
   }
-  for (field in c("occurred_at", "available_at")) {
-    rrp_check_utc_time(events[[field]], paste0("terminal_event$", field))
-  }
+  rrp_check_utc_time(events$occurred_at, "terminal_event$occurred_at")
   invisible(TRUE)
 }

@@ -1,6 +1,6 @@
 Package: readmit
 Title: Readmission Risk Pool Platform
-Version: 1.0.0
+Version: 1.1.0
 Authors@R: c(person("Alex", "Zajichek", email = "alex@centralstatz.com", role = c("aut", "cre")), person("CentralStatz Statistical & Data Sciences LLC", role = "cph"))
 Description: Provides the R implementation of the Readmission Risk Pool (RRP)
     analytical platform for reassessing the remaining probability of a first
@@ -13,7 +13,6 @@ Description: Provides the R implementation of the Readmission Risk Pool (RRP)
     included.
 License: Apache License (>= 2)
 Encoding: UTF-8
-RoxygenNote: 7.3.3
 Suggests: bslib, knitr, plotly, reactable, rmarkdown, shiny, testthat
         (>= 3.0.0), yaml
 Config/testthat/edition: 3
@@ -24,10 +23,11 @@ Depends: R (>= 4.1.0)
 Imports: DBI, duckdb
 Config/Needs/website: dplyr, tidyr
 VignetteBuilder: knitr
+Config/roxygen2/version: 8.1.1
 NeedsCompilation: no
-Packaged: 2026-11-03 23:08:49 UTC; alexzajichek
+Packaged: 2026-11-10 02:59:33 UTC; alexzajichek
 Author: Alex Zajichek [aut, cre],
   CentralStatz Statistical & Data Sciences LLC [cph]
 Maintainer: Alex Zajichek <alex@centralstatz.com>
 Repository: CRAN
-Date/Publication: 2026-11-04 00:10:10 UTC
+Date/Publication: 2026-11-10 09:30:18 UTC

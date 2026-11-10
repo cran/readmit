@@ -12,12 +12,11 @@ run_test_canonical <- function() {
   episodes$discharge_time[7] <- run_test_time("2025-12-01 01:00:00.125")
   episodes$admission_time[7] <- run_test_time("2025-11-30 01:00:00.125")
   events <- data.frame(
-    terminal_event_id = c("event-readmission", "event-death", "event-delayed"),
+    terminal_event_id = c("event-readmission", "event-death", "event-later"),
     episode_id = c("episode-5", "episode-6", "episode-8"),
     event_type = c("readmission", "death", "readmission"),
-    occurred_at = rep(run_test_time("2026-01-05 08:00:00.5"), 3),
-    available_at = c(rep(run_test_time("2026-01-06 09:00:00.25"), 2),
-                     run_test_time("2026-01-12 09:00:00.25"))
+    occurred_at = c(rep(run_test_time("2026-01-05 08:00:00.5"), 2),
+                    run_test_time("2026-01-12 09:00:00.25"))
   )
   list(discharge_episode = episodes, terminal_event = events)
 }
@@ -52,7 +51,7 @@ run_test_project <- function() {
   project
 }
 
-test_that("integrated runs retain outcomes and time-specific event knowledge", {
+test_that("integrated runs retain outcomes and time-specific event occurrence", {
   project <- run_test_project()
   on.exit(unlink(project, recursive = TRUE), add = TRUE)
   file.rename(file.path(project, "R", "produce-canonical.R"),
@@ -85,6 +84,7 @@ test_that("integrated runs retain outcomes and time-specific event knowledge", {
   expect_identical(as.numeric(runs$as_of_time), as.numeric(earlier))
   expect_identical(attr(runs$created_at, "tzone"), "UTC")
   stored <- readmit:::rrp_read_assessments(project, first$run_id)
+  expect_false("terminal_available_at" %in% names(stored))
   expect_identical(nrow(stored), 8L)
   expect_identical(stored$episode_id, paste0("episode-", 1:8))
   expect_identical(stored$disposition, c(
@@ -125,19 +125,17 @@ test_that("integrated runs retain outcomes and time-specific event knowledge", {
                    list(8L, 2L, 3L, 3L))
   expect_identical(nrow(readmit:::rrp_read_runs(project)), 3L)
   expect_identical(nrow(readmit:::rrp_read_assessments(project)), 24L)
-  first_delayed <- readmit:::rrp_read_assessments(
+  first_event <- readmit:::rrp_read_assessments(
     project, first$run_id, "episode-8"
   )
-  second_delayed <- readmit:::rrp_read_assessments(
+  second_event <- readmit:::rrp_read_assessments(
     project, second$run_id, "episode-8"
   )
-  expect_identical(first_delayed$disposition, "accepted")
-  expect_true(is.na(first_delayed$terminal_event_id))
-  expect_identical(second_delayed$disposition, "known_readmission")
-  expect_identical(second_delayed$terminal_event_id, "event-delayed")
-  expect_identical(as.numeric(second_delayed$terminal_occurred_at),
-                   as.numeric(run_test_time("2026-01-05 08:00:00.5")))
-  expect_identical(as.numeric(second_delayed$terminal_available_at),
+  expect_identical(first_event$disposition, "accepted")
+  expect_true(is.na(first_event$terminal_event_id))
+  expect_identical(second_event$disposition, "known_readmission")
+  expect_identical(second_event$terminal_event_id, "event-later")
+  expect_identical(as.numeric(second_event$terminal_occurred_at),
                    as.numeric(run_test_time("2026-01-12 09:00:00.25")))
   expect_identical(vapply(readRDS(file.path(project, "source-times.rds")),
                           as.numeric, numeric(1)),
@@ -203,20 +201,75 @@ test_that("invalid prerequisites and source failures leave no completed run", {
   expect_false(dir.exists(file.path(invalid, "state")))
 })
 
-test_that("fatal persistence failure rolls back and preserves earlier runs", {
+test_that("future discharge rejects a first run before provider or history", {
   project <- run_test_project()
   on.exit(unlink(project, recursive = TRUE), add = TRUE)
   rrp_state_init(project)
   time <- run_test_time("2026-01-10 12:00:00.125")
-  prior <- rrp_run(project, time)
   canonical <- run_test_canonical()
   canonical$discharge_episode$discharge_time[1] <-
     run_test_time("2026-01-11 01:00:00.125")
   saveRDS(canonical, file.path(project, "canonical.rds"))
 
-  expect_error(rrp_run(project, time))
-  expect_identical(readmit:::rrp_read_runs(project)$run_id, prior$run_id)
-  expect_identical(nrow(readmit:::rrp_read_assessments(project)), 8L)
+  expect_error(rrp_run(project, time),
+               "discharge_episode\\$discharge_time.*as_of_time.*episode-1")
+  expect_false(file.exists(file.path(project, "provider-requests.rds")))
+  expect_identical(nrow(readmit:::rrp_read_runs(project)), 0L)
+  expect_identical(nrow(readmit:::rrp_read_assessments(project)), 0L)
+})
+
+test_that("historical runs succeed when the mapper selects discharged episodes", {
+  project <- run_test_project()
+  on.exit(unlink(project, recursive = TRUE), add = TRUE)
+  time <- run_test_time("2026-01-10 12:00:00.125")
+  canonical <- run_test_canonical()
+  canonical$discharge_episode$discharge_time[1] <- time
+  canonical$discharge_episode$discharge_time[2] <-
+    run_test_time("2026-01-11 01:00:00.125")
+  saveRDS(canonical, file.path(project, "canonical.rds"))
+  writeLines(c(
+    "rrp_produce_canonical <- function(project_root, as_of_time) {",
+    "  canonical <- readRDS(file.path(project_root, 'canonical.rds'))",
+    "  episodes <- canonical$discharge_episode",
+    "  canonical$discharge_episode <- episodes[episodes$discharge_time <= as_of_time, , drop = FALSE]",
+    "  events <- canonical$terminal_event",
+    "  canonical$terminal_event <- events[events$episode_id %in% canonical$discharge_episode$episode_id, , drop = FALSE]",
+    "  canonical",
+    "}"
+  ), file.path(project, "R", "produce-canonical.R"))
+  rrp_state_init(project)
+
+  result <- rrp_run(project, time)
+  stored <- readmit:::rrp_read_assessments(project, result$run_id)
+  expect_identical(result$episodes_processed, 7L)
+  expect_identical(nrow(stored), 7L)
+  expect_false("episode-2" %in% stored$episode_id)
+  at_discharge <- stored[stored$episode_id == "episode-1", , drop = FALSE]
+  expect_identical(as.numeric(at_discharge$discharge_time), as.numeric(time))
+  expect_identical(at_discharge$disposition, "accepted")
+  expect_true(file.exists(file.path(project, "provider-requests.rds")))
+})
+
+test_that("future discharge preserves earlier runs and permits a later valid run", {
+  project <- run_test_project()
+  on.exit(unlink(project, recursive = TRUE), add = TRUE)
+  rrp_state_init(project)
+  time <- run_test_time("2026-01-10 12:00:00.125")
+  prior <- rrp_run(project, time)
+  prior_runs <- readmit:::rrp_read_runs(project)
+  prior_assessments <- readmit:::rrp_read_assessments(project)
+  prior_requests <- readRDS(file.path(project, "provider-requests.rds"))
+  canonical <- run_test_canonical()
+  canonical$discharge_episode$discharge_time[1] <-
+    run_test_time("2026-01-11 01:00:00.125")
+  saveRDS(canonical, file.path(project, "canonical.rds"))
+
+  expect_error(rrp_run(project, time),
+               "discharge_episode\\$discharge_time.*as_of_time.*episode-1")
+  expect_identical(readRDS(file.path(project, "provider-requests.rds")),
+                   prior_requests)
+  expect_identical(readmit:::rrp_read_runs(project), prior_runs)
+  expect_identical(readmit:::rrp_read_assessments(project), prior_assessments)
 
   saveRDS(run_test_canonical(), file.path(project, "canonical.rds"))
   next_run <- rrp_run(project, time)

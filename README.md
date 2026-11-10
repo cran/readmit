@@ -26,15 +26,16 @@ coverage](https://codecov.io/gh/centralstatz/readmit/graph/badge.svg)](https://a
 
 ## How RRP works
 
-For an episode still within follow-up and without a known readmission or
-death, each assessment concerns the remaining probability of a **first
-hospital readmission strictly after the assessment time and through 30
-elapsed days after the original discharge**. The endpoint stays fixed;
-another assessment does not start a new 30-day window. The estimate
-should use information available at that time. For eligibility,
-`readmit` distinguishes when a readmission or death occurred from when
-it became known, so later knowledge does not rewrite an earlier
-assessment.
+For an episode still within follow-up and without a readmission or death
+by the assessment time, each risk estimate concerns the remaining
+probability of a **first hospital readmission strictly after the
+assessment time and through 30 elapsed days after the original
+discharge**. The endpoint stays fixed; another assessment does not start
+a new 30-day window. `readmit` uses when a supplied readmission or death
+occurred to decide whether the episode is still eligible. An event
+occurring by the assessment time removes it from the current risk pool.
+The project’s risk provider may use predictor information available at
+that time.
 
 Repeated assessments retain accepted estimates, provider failures, and
 ineligible episodes in project history. This history shows what was
@@ -52,16 +53,18 @@ The project application explores those products.
 
 ## Get started
 
-This repository contains the RRP `1.0.0` release source. The [CRAN
-`readmit` 0.0.1 package](https://cran.r-project.org/package=readmit)
-contains earlier, substantially different functionality under an MIT
-license; it does not install RRP. Until the RRP release is available on
-CRAN, install this repository version from GitHub:
+`readmit` 1.0.0 is available on
+[CRAN](https://CRAN.R-project.org/package=readmit). Install the RRP
+package with:
 
 ``` r
-install.packages("remotes")
-remotes::install_github("centralstatz/readmit")
+install.packages("readmit")
 ```
+
+The corresponding [GitHub v1.0.0
+release](https://github.com/centralstatz/readmit/releases/tag/v1.0.0)
+provides the release source and notes. Version 1.0.0 substantially
+changes the earlier 0.0.1 functionality and uses Apache License 2.0.
 
 Choose a new project path whose parent directory already exists:
 
@@ -85,7 +88,9 @@ load; it does not run them or establish that assessments are ready.
 Implement `R/produce-canonical.R` to map your source data to the
 required discharge episodes and terminal events, and
 `R/calculate-risk.R` to provide risk estimates for eligible episodes.
-`rrp_state_init(project)` creates persistent history and
+The source mapper supplies episodes discharged by the assessment time;
+`readmit` rejects a later discharge before running eligibility or the
+risk provider. `rrp_state_init(project)` creates persistent history and
 `rrp_project_status(project)` reports project state; both can be used
 before those scripts are implemented. Once they work,
 `rrp_run(project, as_of_time)` records an assessment at a specified UTC

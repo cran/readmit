@@ -22,9 +22,6 @@ events <- data.frame(
   event_type = c("readmission", "death"),
   occurred_at = as.POSIXct(c(
     "2026-01-06 12:00:00", "2026-01-07 12:00:00"
-  ), tz = "UTC"),
-  available_at = as.POSIXct(c(
-    "2026-01-07 12:00:00", "2026-01-08 12:00:00"
   ), tz = "UTC")
 )
 saveRDS(list(discharge_episode = episodes, terminal_event = events),

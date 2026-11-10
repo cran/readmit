@@ -19,9 +19,6 @@ canonical_test_data <- function() {
       event_type = c("readmission", "death"),
       occurred_at = canonical_test_time(c(
         "2026-01-05 00:00:00", "2026-01-06 00:00:00"
-      )),
-      available_at = canonical_test_time(c(
-        "2026-01-12 00:00:00", "2026-01-07 00:00:00"
       ))
     )
   )
@@ -45,6 +42,7 @@ test_that("canonical source accepts project facts without interpreting time", {
   on.exit(unlink(project, recursive = TRUE), add = TRUE)
   canonical <- canonical_test_data()
   canonical$discharge_episode$project_note <- c("kept", "kept")
+  canonical$terminal_event$available_at <- c("not a timestamp", NA_character_)
   saveRDS(canonical, file.path(project, "canonical.rds"))
   as_of_time <- canonical_test_time("2026-01-10 00:00:00")
 
@@ -53,7 +51,6 @@ test_that("canonical source accepts project facts without interpreting time", {
   expect_identical(result, canonical)
   expect_false("followup_window_end" %in% names(result$discharge_episode))
   expect_true(result$terminal_event$occurred_at[1] < as_of_time)
-  expect_true(result$terminal_event$available_at[1] > as_of_time)
   expect_false(dir.exists(file.path(project, "state")))
   template <- system.file("project-template", package = "readmit")
   expect_identical(
@@ -79,6 +76,33 @@ test_that("typed empty canonical tables are accepted", {
                    canonical)
 })
 
+test_that("canonical production rejects future discharges across the mapped table", {
+  project <- canonical_test_project()
+  on.exit(unlink(project, recursive = TRUE), add = TRUE)
+  as_of_time <- canonical_test_time("2026-01-10 00:00:00")
+  canonical <- canonical_test_data()
+  canonical$discharge_episode$discharge_time[2] <-
+    canonical_test_time("2026-01-11 00:00:00")
+  saveRDS(canonical, file.path(project, "canonical.rds"))
+
+  error <- tryCatch(
+    readmit:::rrp_produce_project_canonical(project, as_of_time),
+    error = identity
+  )
+  expect_s3_class(error, "error")
+  expect_match(conditionMessage(error), "discharge_episode\\$discharge_time")
+  expect_match(conditionMessage(error), "as_of_time \\(2026-01-10")
+  expect_match(conditionMessage(error), "episode_id 'episode-2'")
+  expect_match(conditionMessage(error), "2026-01-11")
+
+  canonical$discharge_episode$discharge_time[2] <- as_of_time
+  saveRDS(canonical, file.path(project, "canonical.rds"))
+  expect_identical(
+    readmit:::rrp_produce_project_canonical(project, as_of_time),
+    canonical
+  )
+})
+
 test_that("canonical structural errors identify unusable facts", {
   project <- canonical_test_project()
   on.exit(unlink(project, recursive = TRUE), add = TRUE)
@@ -100,8 +124,8 @@ test_that("canonical structural errors identify unusable facts", {
   value$discharge_episode$episode_id <- 1:2
   check_invalid(value, "discharge_episode\\$episode_id")
   value <- valid
-  value$terminal_event$available_at <- as.character(value$terminal_event$available_at)
-  check_invalid(value, "terminal_event\\$available_at")
+  value$terminal_event$occurred_at <- NULL
+  check_invalid(value, "terminal_event.*required columns")
   value <- valid
   value$discharge_episode$patient_id[1] <- NA_character_
   check_invalid(value, "discharge_episode\\$patient_id")
@@ -128,8 +152,8 @@ test_that("canonical structural errors identify unusable facts", {
   value$discharge_episode$episode_id[1] <- "   "
   check_invalid(value, "discharge_episode\\$episode_id")
   value <- valid
-  attr(value$terminal_event$available_at, "tzone") <- "America/Chicago"
-  check_invalid(value, "finite UTC POSIXct")
+  attr(value$terminal_event$occurred_at, "tzone") <- "America/Chicago"
+  check_invalid(value, "terminal_event\\$occurred_at")
 
   saveRDS(valid, file.path(project, "canonical.rds"))
   expect_error(readmit:::rrp_produce_project_canonical(project, as.Date("2026-01-10")),
